@@ -1,0 +1,17 @@
+#!/bin/sh
+# 提交前自动同步 README 自动区段（项目结构 / 适配器清单 / 功能特性）。
+# 通过 .gitignore 内的 .githooks/ 目录一起提交，使用方只需：
+#   git config core.hooksPath .githooks
+echo ">> updating README auto sections..."
+if command -v python >/dev/null 2>&1; then
+  PY=python
+elif command -v python3 >/dev/null 2>&1; then
+  PY=python3
+else
+  echo "!! python not found, skip README auto-sync"
+  exit 0
+fi
+"$PY" "$(dirname "$0")/../tools/update_readme.py"
+# 若 README 有改动则将其纳入本次提交
+git add README.md 2>/dev/null
+exit 0

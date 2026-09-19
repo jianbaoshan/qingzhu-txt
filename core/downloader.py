@@ -2,6 +2,7 @@
 
 在 QThread 中运行，通过信号向 UI 汇报日志与进度。
 """
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from adapters.base import BaseAdapter, get_adapter_class
 from core.file_manager import (ensure_dir, safe_filename,
                                write_text_utf8)
-from core.models import Book
+from core.models import Book, DownloadError
 from core.text_cleaner import clean_text
 
 
@@ -20,6 +21,37 @@ class DownloadSettings:
     output_dir: str = r"D:\书籍TXT下载"
     clean: bool = True
     retries: int = 2
+
+
+def _int_to_cn(num: int) -> str:
+    """把 1~9999 的整数转成中文（用于章节号，如 101 → 一百零一，10 → 十）。"""
+    digits = "零一二三四五六七八九"
+    units = ["", "十", "百", "千"]
+    if num == 0:
+        return "零"
+    parts = []
+    place = 0
+    while num > 0:
+        d = num % 10
+        if d:
+            parts.append(digits[d] + units[place])
+        elif parts and not parts[-1].startswith("零"):
+            parts.append(digits[0])
+        num //= 10
+        place += 1
+    s = "".join(reversed(parts))
+    # 十位上的"一十"去掉一（但保留 110 的"一百一十"等非首位情形）
+    if s.startswith("一十"):
+        s = s[1:]
+    return s
+
+_CHAPTER_PREFIX_RE = re.compile(r"^第\s*[0-9零一二三四五六七八九十百千]+\s*[章回节卷部]\s*")
+
+
+def _chapter_title(idx: int, raw: str) -> str:
+    """生成统一的章节内部标题：`第X章 章节名`（去掉原标题中的重复前缀）。"""
+    cleaned = _CHAPTER_PREFIX_RE.sub("", raw).strip()
+    return f"第{_int_to_cn(idx)}章 {cleaned}" if cleaned else f"第{_int_to_cn(idx)}章"
 
 
 class DownloadWorker(QThread):
@@ -56,8 +88,10 @@ class DownloadWorker(QThread):
     def _download_one_book(self, book: Book):
         adapter_cls = get_adapter_class(book.source)
         if adapter_cls is None:
-            raise DownloadError(f"未知数据源：{book.source}")
-        adapter = adapter_cls(self._new_http())
+            # 未内置的站点统一走通用启发式适配器（如「任意网页」）
+            from adapters.generic import GenericAdapter
+            adapter_cls = GenericAdapter
+        adapter = adapter_cls(self._new_http(), progress_cb=lambda m: self.log.emit(m))
 
         # 1. 解析目录
         index_url = book.chapter_hint_url or book.index_url
@@ -83,7 +117,7 @@ class DownloadWorker(QThread):
             self.progress.emit(done, total)
 
         # 3. 保存：整本合并 + 按章节拆分（每章一个 txt，按书名分文件夹）
-        merged = "\n\n\n".join(f"{t}\n\n{b}" for t, b in parts)
+        merged = "\n\n\n".join(f"{_chapter_title(i, t)}\n\n{b}" for i, (t, b) in enumerate(parts, 1))
         book_name = safe_filename(book.display_title)
         book_dir = f"{self.settings.output_dir}\\{book_name}"
         ensure_dir(book_dir)
@@ -92,10 +126,11 @@ class DownloadWorker(QThread):
         write_text_utf8(main_path, merged + "\n")
         self.log.emit(f"[{self._ts()}] ✅ 整本下载完成，文件：{main_path}")
 
-        for idx, (title, body) in enumerate(parts, 1):
+        for idx, (t, body) in enumerate(parts, 1):
             if self._cancel.is_set():
                 return
-            name = f"第{idx:03d}回.txt" if "回" in title else f"第{idx:03d}节.txt"
+            title = _chapter_title(idx, t)
+            name = f"第{idx:03d}回.txt" if "回" in t else f"第{idx:03d}节.txt"
             write_text_utf8(f"{book_dir}\\{name}", f"{title}\n\n{body}\n")
         self.log.emit(f"[{self._ts()}] ✅ 已按章节拆分保存至：{book_dir}")
 

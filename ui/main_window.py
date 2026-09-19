@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QCheckBox, QFileDialog, QGroupBox, QHBoxLayout,
                              QMessageBox)
 
 from adapters.base import detect_site, get_adapter_class
+from adapters.generic import GenericAdapter
 from core.downloader import DownloadSettings, DownloadWorker
 from core.file_manager import open_in_file_manager
 from core.models import Book
@@ -52,6 +53,7 @@ class SearchWorker(QThread):
 class ParseWorker(QThread):
     parsed = pyqtSignal(object, str, str)   # chapters, site, title
     parse_failed = pyqtSignal(str)
+    progress = pyqtSignal(str)              # 解析过程日志
 
     def __init__(self, url: str, parent=None):
         super().__init__(parent)
@@ -60,11 +62,17 @@ class ParseWorker(QThread):
     def run(self):
         from core.http_client import HttpClient
         site = detect_site(self.url)
+
+        def progress_cb(msg: str):
+            self.progress.emit(msg)
+
         try:
             if site is None:
-                raise ValueError("当前仅支持维基文库、识典古籍、CTEXT。")
-            cls = get_adapter_class(site)
-            adapter = cls(HttpClient())
+                # 未命中的站点 → 走通用启发式适配器，支持任意小说网站目录链接
+                adapter: GenericAdapter = GenericAdapter(HttpClient(), progress_cb=progress_cb)
+                site = adapter.name
+            else:
+                adapter = get_adapter_class(site)(HttpClient(), progress_cb=progress_cb)
             chapters = adapter.get_chapter_list(self.url)
             title = adapter.resolve_title(self.url)
             self.parsed.emit(chapters, site, title)
@@ -152,9 +160,9 @@ class MainWindow(QWidget):
 
         self.url_input = QPlainTextEdit()
         self.url_input.setPlaceholderText(
-            "粘贴书籍目录主页完整URL，支持内置3个站点的书籍目录链接\n"
+            "粘贴书籍目录主页完整 URL，支持任意小说网站的目录链接\n"
             "提示：请粘贴书籍总目录页面链接，不要粘贴单章节页面链接。\n"
-            "（识典古籍请粘贴任意章节页面链接，程序可自动还原全书目录）"
+            "（内置站点：维基文库、识典古籍、CTEXT 会自动使用专用解析；其余任意网站将自动启发式识别章节）"
         )
         self.url_input.setFixedHeight(100)
         lay.addWidget(self.url_input)
@@ -286,9 +294,6 @@ class MainWindow(QWidget):
         if not url:
             QMessageBox.information(self, "提示", "请先粘贴书籍目录链接")
             return
-        if detect_site(url) is None:
-            QMessageBox.warning(self, "提示", "当前仅支持维基文库、识典古籍、CTEXT。")
-            return
         self.log(f"[解析] 正在解析链接：{url}")
         self.parse_btn.setEnabled(False)
         self.url_download_btn.setEnabled(False)
@@ -296,8 +301,12 @@ class MainWindow(QWidget):
         self._parse_worker = ParseWorker(url, self)
         self._parse_worker.parsed.connect(self.on_url_parsed)
         self._parse_worker.parse_failed.connect(self.on_parse_failed)
+        self._parse_worker.progress.connect(self.on_parse_progress)
         self._parse_worker.finished.connect(lambda: self.parse_btn.setEnabled(True))
         self._parse_worker.start()
+
+    def on_parse_progress(self, msg: str):
+        self.log(f"[解析] {msg}")
 
     def on_url_parsed(self, chapters, site: str, title: str):
         self.parse_result_label.setText(f"检测到共 {len(chapters)} 个章节（来源：{site}）")

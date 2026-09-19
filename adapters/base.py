@@ -11,8 +11,17 @@ class BaseAdapter(ABC):
     name = "未知站点"
     domain = ""
 
-    def __init__(self, http: HttpClient):
+    def __init__(self, http: HttpClient, progress_cb=None):
         self.http = http
+        self._progress_cb = progress_cb
+
+    def _notify(self, msg: str) -> None:
+        """向调用方（App 日志等）报告解析进度；未提供回调则忽略。"""
+        if self._progress_cb:
+            try:
+                self._progress_cb(msg)
+            except Exception:
+                pass
 
     @abstractmethod
     def search_book(self, keyword: str) -> list[Book]:

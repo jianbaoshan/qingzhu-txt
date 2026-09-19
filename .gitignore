@@ -1,0 +1,36 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# ===== 调试/临时文件（_ 前缀的探针、测试、抓包页面、下载脚本）=====
+_*.py
+_*.js
+_*.html
+temppage.html
+txt设计文档
+
+# ===== 阅文/识典逆向签名脚本（来源第三方，非本项目运行时依赖，不开源分发）=====
+core/bdms.js
+core/abogus_sign.js
+_*.js
+
+# ===== 测试资源 / 脚本产物 =====
+speaker_test.7z
+test_speaker.py
+render_segment.py
+pause.py
+download_chixing.py
+
+# ===== IDE / 本地工具 =====
+.trae/
+.idea/
+.vscode/
+*.suo
+*.user
+
+# ===== 系统 =====
+Thumbs.db
+Desktop.ini
